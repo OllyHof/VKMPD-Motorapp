@@ -37,8 +37,8 @@ Windows laat normaal maar één programma tegelijk dezelfde COM-poort openen.
 De driver levert de positie als pulstelling. Het aantal pulsen per omwenteling kan
 afhangen van de motorconfiguratie. De app start met 24 als aannemelijke waarde voor
 een 8-polige motor; kalibreer die waarde door de as precies één omwenteling te draaien
-en de positiepulsverandering te meten. Daarna rekent de app pulsen om naar graden of
-radialen. **Stel dit in voordat je positiecommando's gebruikt.**
+en de positiepulsverandering te meten. Daarna rekent de app pulsen om naar graden,
+radialen of rotaties. **Stel dit in voordat je positiecommando's gebruikt.**
 
 “Stel dit in als nul” maakt de huidige aspositie nul voor deze app-sessie. Dit schrijft
 geen nulpunt naar het stuurprogramma en gaat verloren wanneer je de app afsluit.
@@ -46,12 +46,12 @@ Gebruik externe eindschakelaars of mechanische begrenzing waar nodig.
 
 Na verbinden ververst de app de positie standaard elke 500 ms. Je kunt automatisch
 verversen uitzetten of de interval instellen tussen 100 en 5000 ms. De keus tussen
-graden en radialen rekent doel, bereik, snelheid en versnelling automatisch om.
+graden, radialen en rotaties rekent doel, bereik, snelheid en versnelling automatisch om.
 
 De snelheids- en versnellingsvelden zijn de maximumwaarden voor de gesloten-lus
 positie-/snelheidsregeling. Snelheid is begrensd op de nominale 3000 rpm van deze
 motor. De app start op 30°/s en 60°/s². Het softwarebereik start op ±360° en is
-instelbaar tot maximaal ±3600° (of het equivalent in radialen). De app weigert een
+instelbaar tot maximaal ±3600°, ±20π radialen of ±10 rotaties. De app weigert een
 doel buiten dat bereik. Dit is een softwaregrens, geen fysieke eindstop. Een
 positiecommando kan de motor direct laten bewegen; houd de as vrij en begin met lage
 limieten.

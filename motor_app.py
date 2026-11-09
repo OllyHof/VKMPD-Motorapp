@@ -252,7 +252,7 @@ class MotorApp:
         ttk.Button(pos, text="Nu uitlezen", command=self.read_position).grid(row=0, column=2, padx=4)
         ttk.Button(pos, text="Maak huidige positie nul", command=self.set_zero).grid(row=1, column=0, pady=(10, 0), sticky="w")
         ttk.Label(pos, text="Eenheid").grid(row=1, column=1, sticky="e", pady=(10, 0))
-        ttk.Combobox(pos, textvariable=self.units, values=("graden", "radialen"), width=12, state="readonly").grid(row=1, column=2, sticky="w", pady=(10, 0))
+        ttk.Combobox(pos, textvariable=self.units, values=("graden", "radialen", "rotaties"), width=12, state="readonly").grid(row=1, column=2, sticky="w", pady=(10, 0))
         ttk.Checkbutton(pos, text="Positie automatisch verversen", variable=self.auto_update,
                         command=self._toggle_polling).grid(row=2, column=0, sticky="w", pady=(10, 0))
         ttk.Label(pos, text="Elke (ms)").grid(row=2, column=1, sticky="e", pady=(10, 0))
@@ -273,11 +273,11 @@ class MotorApp:
         self.travel_max_label = ttk.Label(motion, text="", foreground="#555")
         self.travel_max_label.grid(row=1, column=2, sticky="w", pady=(10, 0))
         ttk.Label(motion, text="3. Maximum snelheid en versnelling").grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 4))
-        ttk.Label(motion, text="Snelheid (°/s of rad/s)").grid(row=3, column=0, sticky="w")
+        ttk.Label(motion, text="Snelheid (°/s, rad/s of rot/s)").grid(row=3, column=0, sticky="w")
         ttk.Entry(motion, textvariable=self.speed, width=12).grid(row=3, column=1, padx=8, sticky="w")
         self.speed_max_label = ttk.Label(motion, text="", foreground="#555")
         self.speed_max_label.grid(row=3, column=2, sticky="w")
-        ttk.Label(motion, text="Versnelling (°/s² of rad/s²)").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(motion, text="Versnelling (°/s², rad/s² of rot/s²)").grid(row=4, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(motion, textvariable=self.acceleration, width=12).grid(row=4, column=1, padx=8, sticky="w", pady=(6, 0))
         self.accel_max_label = ttk.Label(motion, text="", foreground="#555")
         self.accel_max_label.grid(row=4, column=2, sticky="w", pady=(6, 0))
@@ -296,7 +296,7 @@ class MotorApp:
     def _update_units(self):
         new_unit = self.units.get()
         if new_unit != self.last_unit:
-            factor = math.pi / 180 if new_unit == "radialen" else 180 / math.pi
+            factor = self._radians_per_unit(self.last_unit) / self._radians_per_unit(new_unit)
             for variable in (self.target, self.travel_limit, self.speed, self.acceleration):
                 try:
                     variable.set(f"{float(variable.get()) * factor:.6g}")
@@ -305,13 +305,24 @@ class MotorApp:
             self.last_unit = new_unit
             if self.client:
                 self.read_position()
-        max_accel = 6553.5 * (15.0 if new_unit == "graden" else math.pi / 12)
-        accel_unit = "°/s²" if new_unit == "graden" else "rad/s²"
+        max_accel = (6553.5 * math.pi / 12) / self._radians_per_unit(new_unit)
+        accel_unit = {"graden": "°/s²", "radialen": "rad/s²", "rotaties": "rot/s²"}[new_unit]
         self.accel_max_label.configure(text=f"Max. {max_accel:,.0f} {accel_unit} (driverregister)")
-        speed_max = "18.000°/s" if new_unit == "graden" else f"{3000 * 2 * math.pi / 60:.1f} rad/s"
+        speed_max_value = (3000 * 2 * math.pi / 60) / self._radians_per_unit(new_unit)
+        speed_symbol = {"graden": "°/s", "radialen": "rad/s", "rotaties": "rot/s"}[new_unit]
+        speed_max = f"{speed_max_value:,.1f} {speed_symbol}"
         self.speed_max_label.configure(text=f"Max. {speed_max} (3000 rpm nominaal)")
-        travel_max = "3600°" if new_unit == "graden" else f"{20 * math.pi:.2f} rad"
+        travel_max_value = 10 * 2 * math.pi / self._radians_per_unit(new_unit)
+        travel_symbol = {"graden": "°", "radialen": "rad", "rotaties": "rotaties"}[new_unit]
+        travel_max = f"{travel_max_value:g} {travel_symbol}"
         self.travel_max_label.configure(text=f"Max. ±{travel_max} (appgrens)")
+
+    @staticmethod
+    def _radians_per_unit(unit):
+        return {"graden": math.pi / 180, "radialen": 1.0, "rotaties": 2 * math.pi}[unit]
+
+    def _unit_symbol(self):
+        return {"graden": "°", "radialen": "rad", "rotaties": "rot"}[self.units.get()]
 
     def _toggle_polling(self):
         if not self.auto_update.get():
@@ -436,16 +447,16 @@ class MotorApp:
 
     def _value_from_counts(self, counts):
         turns = counts / self._counts_per_rev()
-        return turns * (2 * math.pi if self.units.get() == "radialen" else 360.0)
+        return turns * (2 * math.pi / self._radians_per_unit(self.units.get()))
 
     def _counts_from_value(self, value):
-        turns = value / (2 * math.pi if self.units.get() == "radialen" else 360.0)
+        turns = value * self._radians_per_unit(self.units.get()) / (2 * math.pi)
         return round(turns * self._counts_per_rev())
 
     def read_position(self, show_errors=True):
         try:
             counts = self._position_counts() - self.raw_zero
-            self.position.set(f"{self._value_from_counts(counts):.3f} {'rad' if self.units.get() == 'radialen' else '°'}")
+            self.position.set(f"{self._value_from_counts(counts):.3f} {self._unit_symbol()}")
         except Exception as exc:
             if show_errors:
                 messagebox.showerror("Positie uitlezen", str(exc))
@@ -455,13 +466,12 @@ class MotorApp:
     def set_zero(self):
         try:
             self.raw_zero = self._position_counts()
-            self.position.set(f"0.000 {'rad' if self.units.get() == 'radialen' else '°'}")
+            self.position.set(f"0.000 {self._unit_symbol()}")
         except Exception as exc:
             messagebox.showerror("Nulpunt", str(exc))
 
     def _to_commutation_hz(self, angular_value):
-        radians_factor = math.pi / 180 if self.units.get() == "graden" else 1.0
-        radians_per_second = angular_value * radians_factor
+        radians_per_second = angular_value * self._radians_per_unit(self.units.get())
         # Manual's speed relation: RPM = commutation_Hz * 20 / motor_poles.
         return radians_per_second * MOTOR_POLES / (20 * 2 * math.pi) * 60
 
@@ -471,7 +481,7 @@ class MotorApp:
             accel = float(self.acceleration.get())
             if speed <= 0 or accel <= 0 or not math.isfinite(speed + accel):
                 raise ValueError("Snelheid en versnelling moeten positief zijn.")
-            rpm = speed * (60 / (2 * math.pi) if self.units.get() == "radialen" else 1 / 6)
+            rpm = speed * self._radians_per_unit(self.units.get()) * 60 / (2 * math.pi)
             if rpm > 3000:
                 raise ValueError("De ingestelde snelheid overschrijdt 3000 rpm, de nominale motorsnelheid.")
             # 0x0066 maximum commutation speed (0.1 Hz); 0x0062 acceleration (0.1 Hz/s).
@@ -493,13 +503,13 @@ class MotorApp:
             if not math.isfinite(target_value):
                 raise ValueError("Geef een geldige doelpositie op.")
             travel_limit = float(self.travel_limit.get())
-            max_travel = 20 * math.pi if self.units.get() == "radialen" else 3600.0
+            max_travel = 10 * 2 * math.pi / self._radians_per_unit(self.units.get())
             if not math.isfinite(travel_limit) or not 0 < travel_limit <= max_travel:
                 raise ValueError(f"Softwarebereik moet groter zijn dan 0 en maximaal {max_travel:g} {self.units.get()} zijn.")
             if abs(target_value) > travel_limit:
                 raise ValueError(f"Doelpositie valt buiten het ingestelde softwarebereik ±{travel_limit:g}.")
             speed_value = float(self.speed.get())
-            rpm = speed_value * (60 / (2 * math.pi) if self.units.get() == "radialen" else 1 / 6)
+            rpm = speed_value * self._radians_per_unit(self.units.get()) * 60 / (2 * math.pi)
             if rpm <= 0 or rpm > 3000:
                 raise ValueError("Snelheid moet positief zijn en maximaal 3000 rpm.")
             speed_raw = round(self._to_commutation_hz(speed_value) * 10)
