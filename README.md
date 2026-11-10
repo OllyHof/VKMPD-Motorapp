@@ -22,7 +22,7 @@ commando om de pakketten later handmatig te installeren.
 - `motor_controller.py` bevat Modbus-communicatie, positieomrekening en de bewegingslimieten.
 - `requirements.txt` bevat de externe Python-pakketten.
 
-Onder **Beweging** staat ook **Handmatig Modbus-register schrijven**. Vul een
+Onder **Modbus-registers** staat bediening om een register te lezen of te schrijven. Vul een
 registeradres en een 16-bit waarde in als decimaal getal of als hexwaarde met `0x`
 (bijvoorbeeld `0x0040` en `0x0000`). Met **Lees** lees je het registeradres uit; de
 waarde verschijnt als decimaal en hex. Een register schrijven kan direct beweging of

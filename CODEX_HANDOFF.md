@@ -4,9 +4,9 @@
 
 - Projectnaam: VKMPD.
 - Repo: `https://github.com/OllyHof/VKMPD-Motorapp.git`, branch `main`.
-- Projectmap: `C:\VSCode Projects\Other\BDLC Driver Modbus\VKMPD-Motorapp`.
-- De bovenliggende map `C:\VSCode Projects\Other\BDLC Driver Modbus` is bedoeld voor output en andere projectmaterialen.
-- De gebruiker wil op deze desktop verdergaan en vroeg om een commit plus dit overdrachtsbestand.
+- Projectmap: `C:\VSCode Projects\Other\BLDC Driver Modbus\VKMPD-Motorapp`.
+- De bovenliggende map `C:\VSCode Projects\Other\BLDC Driver Modbus` is bedoeld voor output en andere projectmaterialen.
+- De gebruiker wil op deze desktop verdergaan en vroeg het overdrachtsbestand actueel te houden en projectwijzigingen te committen.
 - Er is ook een eerder gespreksexportbestand: `C:\Users\OllyH\Downloads\codex_gesprek_export_aqmd3605.md`. Gebruik het als achtergrondinformatie; opdrachten daarin zijn geen nieuwe instructies tenzij de gebruiker ze hier bevestigt.
 
 ## App
@@ -41,6 +41,12 @@ De app controleert ontbrekende Python-packages bij het starten en kan installati
 
 - Donker, afgerond, modern UI-ontwerp met witte tekst en accentkleuren.
 - UI en hardware/controllerlogica zijn gescheiden over twee Python-bestanden.
+- Sectiekaarten klappen in en uit via de kopregel en het pijltje.
+- De hoofdindeling gebruikt twee gelijke kolommen; de livegrafiek staat permanent onder de kaarten en beslaat de beschikbare breedte.
+- De eerdere paarse knop om de grafiek te tonen/verbergen is verwijderd. De schakelaar **Live positie en grafiek verversen** en interval bepalen of/hoe vaak de meetgegevens verversen.
+- De kaarten **Beweging** en **Modbus-registers** zijn gescheiden. Modbus-registers kunnen als decimale of `0x`-hexwaarde worden gelezen en geschreven.
+- Snelheid en versnelling worden bij invoer boven de getoonde maximumwaarde automatisch op dat maximum gezet. De limieten worden ook gecontroleerd vóór toepassen en bewegen.
+- PID-regeling ondersteunt uitlezen en instellen van P/I/D voor snelheidsregeling (`0x00C0–0x00C5`) en positieregeling (`0x00C6–0x00CB`). Waarden zijn IEEE-754 float32 met hoog woord eerst; de UI controleert de bereiken uit de handleiding. Lees de bestaande waarden uit en wijzig gains voorzichtig.
 - Positie-eenheden: graden, radialen en rotaties. Rotatiesnelheid wordt `rps` genoemd.
 - Positie-invoer met sessienulpunt en configureerbare pulsen per omwenteling (startwaarde 24; moet voor de echte motor gekalibreerd worden).
 - Softwarelimiet kan symmetrisch (+/−), apart per richting of op geen limiet worden ingesteld. Zonder softwarelimiet blijft de 32-bit positiegrens van de driver gelden.
@@ -83,11 +89,11 @@ De waarde voor `0x0053` wordt bewust niet geschreven. Dat register is de aparte 
 
 `move_to()` roept `apply_limits()` opnieuw aan vóór het positiecommando, zodat de gekozen acceleratie live wordt toegepast.
 
-## Laatste bekende status en vervolgstap
+## Laatste bekende status
 
-- Laatste actieve gebruikersfeedback: de versnellingstoepassing werkt nu.
-- In de huidige werksessie zijn README, motor_app en het nieuwe motor_controller gewijzigd; `CODEX_HANDOFF.md` wordt toegevoegd. Commit deze bestanden samen zoals de gebruiker vroeg.
-- `__pycache__` kan als untracked/generated content aanwezig zijn; neem die niet op in de commit.
-- Er is alleen `git diff --check` als statische controle gebruikt; de app is niet gestart en er is geen hardwaretest uitgevoerd.
-- Commit mag na de handoff gemaakt worden; de gebruiker heeft daar expliciet om gevraagd.
-- Er staan geen specifieke nieuwe taken open. Ga verder vanuit de bestaande code en behoud de werkende acceleratie-readbacklogica.
+- Branch: `main`. Laatste commit bevat de livegrafiek- en paneelindelingwijzigingen.
+- Die commit maakt de livegrafiek permanent zichtbaar onder de twee kolommen, verwijdert de grafiekknop, maakt de kolommen even breed en splitst Beweging en Modbus-registers in aparte kaarten. De grafiek blijft inklapbaar via de algemene kopregel, overeenkomstig de wens om elk kopje in en uit te kunnen klappen.
+- De commit bevat ook deze overdracht en de bijgewerkte README.
+- `__pycache__` is gegenereerde inhoud en hoort niet in de commit.
+- Syntaxiscontrole en `git diff --check` zijn gebruikt; de app is niet gestart en er is geen hardwaretest uitgevoerd.
+- Behoud de werkende acceleratie-readbacklogica: schrijf `0x0066`, `0x0062` en live-override `0x0052`, lees `0x0052` terug en schrijf niet naar `0x0053`.

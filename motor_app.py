@@ -33,19 +33,41 @@ def _rounded_polygon(canvas, x1, y1, x2, y2, radius, fill, outline=""):
 
 
 class RoundedCard(tk.Frame):
-    """A responsive card with a rounded canvas background and themed content."""
+    """A responsive, clickable card that can collapse its content."""
     def __init__(self, master, title, padding=16):
         super().__init__(master, bg=COLORS["canvas"], bd=0, highlightthickness=0)
         self.canvas = tk.Canvas(self, bg=COLORS["canvas"], bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.inset = 10
+        self.title = title
+        self.collapsed = False
         self.body = ttk.Frame(self.canvas, style="Card.TFrame", padding=padding)
         self.window = self.canvas.create_window((self.inset, self.inset), window=self.body, anchor="nw")
-        ttk.Label(self.body, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(0, 10))
+        self.header = ttk.Frame(self.body, style="Card.TFrame", cursor="hand2")
+        self.header.pack(fill="x", pady=(0, 10))
+        self.title_label = ttk.Label(self.header, text=title, style="CardTitle.TLabel", cursor="hand2")
+        self.title_label.pack(side="left", anchor="w")
+        self.collapse_indicator = ttk.Label(self.header, text="▾", style="CardTitle.TLabel", cursor="hand2")
+        self.collapse_indicator.pack(side="right")
         self.content = ttk.Frame(self.body, style="Card.TFrame")
         self.content.pack(fill="both", expand=True)
+        for widget in (self.header, self.title_label, self.collapse_indicator):
+            widget.bind("<Button-1>", self.toggle)
+            widget.bind("<Return>", self.toggle)
+            widget.bind("<space>", self.toggle)
         self.body.bind("<Configure>", self._body_configured)
         self.canvas.bind("<Configure>", self._canvas_configured)
+
+    def toggle(self, _event=None):
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self.content.pack_forget()
+            self.collapse_indicator.configure(text="▸")
+        else:
+            self.content.pack(fill="both", expand=True)
+            self.collapse_indicator.configure(text="▾")
+        self.body.update_idletasks()
+        self._body_configured()
 
     def _body_configured(self, _event=None):
         requested = max(self.body.winfo_reqheight() + self.inset * 2, 42)
@@ -249,7 +271,6 @@ class MotorApp:
         self.raw_register_address = tk.StringVar()
         self.raw_register_value = tk.StringVar()
         self.desired_position = None
-        self.chart_visible = False
         self.chart_samples = []
         self.chart_start_time = None
         self.chart_signals = {
@@ -340,8 +361,8 @@ class MotorApp:
 
         columns = ttk.Frame(page, style="Canvas.TFrame")
         columns.pack(fill="both", expand=True)
-        columns.columnconfigure(0, weight=6, uniform="col")
-        columns.columnconfigure(1, weight=5, uniform="col")
+        columns.columnconfigure(0, weight=1, uniform="col")
+        columns.columnconfigure(1, weight=1, uniform="col")
         columns.rowconfigure(0, weight=1)
         left = ttk.Frame(columns, style="Canvas.TFrame")
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
@@ -394,7 +415,7 @@ class MotorApp:
         self.driver_fault_label.pack(side="left", padx=(6, 0))
 
         motion_card = RoundedCard(left, "BEWEGING", padding=18)
-        motion_card.pack(fill="both", expand=True)
+        motion_card.pack(fill="x", pady=(0, 14))
         motion = motion_card.content
         ttk.Label(motion, text="Doelpositie vanaf nulpunt", style="Section.TLabel").pack(anchor="w")
         ttk.Label(motion, text="Voer een doel binnen de ingestelde positielimiet in.", style="Muted.TLabel", wraplength=440).pack(anchor="w", pady=(3, 10))
@@ -405,11 +426,14 @@ class MotorApp:
                    foreground="navy", height=42).pack(side="left", padx=(10, 0))
         ttk.Label(motion, text="De as kan direct bewegen. Houd de as vrij en begin met lage limieten.", style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(14, 0))
 
-        ttk.Separator(motion).pack(fill="x", pady=(18, 14))
-        ttk.Label(motion, text="Handmatig Modbus-register schrijven", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(motion, text="Adres en waarde mogen decimaal of hex zijn (hex begint met 0x).",
+        register_card = RoundedCard(left, "MODBUS-REGISTERS", padding=18)
+        register_card.pack(fill="x")
+        register = register_card.content
+        ttk.Label(register, text="Lees een holdingregister of schrijf een 16-bit waarde.",
                   style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(3, 8))
-        register_row = ttk.Frame(motion, style="Card.TFrame")
+        ttk.Label(register, text="Adres en waarde mogen decimaal of hex zijn (hex begint met 0x).",
+                  style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(0, 8))
+        register_row = ttk.Frame(register, style="Card.TFrame")
         register_row.pack(fill="x")
         address_field = ttk.Frame(register_row, style="Card.TFrame")
         address_field.pack(side="left", fill="x", expand=True, padx=(0, 8))
@@ -424,8 +448,8 @@ class MotorApp:
         PillButton(register_row, "Verstuur", self.write_register, color="blue",
                    height=38).pack(side="right", anchor="s")
         self.register_read_result = tk.StringVar(value="Nog geen register uitgelezen")
-        ttk.Label(motion, textvariable=self.register_read_result, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
-        ttk.Label(motion, text="Let op: een register schrijven kan motorbeweging of een wijziging van driverinstellingen veroorzaken.",
+        ttk.Label(register, textvariable=self.register_read_result, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
+        ttk.Label(register, text="Let op: een register schrijven kan motorbeweging of een wijziging van driverinstellingen veroorzaken.",
                   style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(8, 0))
 
         limits_card = RoundedCard(right, "SNELHEID & VERSNELLING", padding=18)
@@ -482,7 +506,7 @@ class MotorApp:
                   style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(8, 0))
 
         setup_card = RoundedCard(right, "NULPUNT & VERVERSEN", padding=18)
-        setup_card.pack(fill="both", expand=True)
+        setup_card.pack(fill="x")
         setup = setup_card.content
         PillButton(setup, "Maak huidige positie nul", self.set_zero, color="purple",
                    height=36).pack(anchor="w")
@@ -512,7 +536,7 @@ class MotorApp:
         self.limit_info.pack(anchor="w", pady=(5, 13))
         self._show_limit_row()
         ttk.Separator(setup).pack(fill="x", pady=(0, 12))
-        ttk.Checkbutton(setup, text="Positie automatisch verversen", variable=self.auto_update, command=self._toggle_polling).pack(anchor="w")
+        ttk.Checkbutton(setup, text="Live positie en grafiek verversen", variable=self.auto_update, command=self._toggle_polling).pack(anchor="w")
         refresh = ttk.Frame(setup, style="Card.TFrame")
         refresh.pack(fill="x", pady=(7, 0))
         ttk.Label(refresh, text="Interval in milliseconden", style="Muted.TLabel").pack(side="left")
@@ -527,10 +551,8 @@ class MotorApp:
         ttk.Label(setup, text="Aan = register 0x0099 waarde 1 (alarm uit). Uit = 0 (alarm actief bij fout).",
                   style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(3, 0))
 
-        self.chart_toggle = PillButton(page, "▸  Livegrafiek tonen", self.toggle_chart,
-                                       color="purple", canvas_bg=COLORS["canvas"], height=38)
-        self.chart_toggle.pack(anchor="w", pady=(14, 0))
         self.chart_card = RoundedCard(page, "LIVEGRAFIEK", padding=12)
+        self.chart_card.pack(fill="x", pady=(16, 0))
         chart_content = self.chart_card.content
         signal_row = ttk.Frame(chart_content, style="Card.TFrame")
         signal_row.pack(fill="x", pady=(0, 8))
@@ -541,7 +563,7 @@ class MotorApp:
                                      command=self._draw_chart)
             button.pack(side="left", padx=(0, 14))
             self.chart_checkbuttons[key] = button
-        self.chart_canvas = tk.Canvas(chart_content, height=260, bg=COLORS["card"],
+        self.chart_canvas = tk.Canvas(chart_content, height=300, bg=COLORS["card"],
                                       highlightthickness=0)
         self.chart_canvas.pack(fill="both", expand=True)
         self.chart_canvas.bind("<Configure>", lambda _event: self._draw_chart())
@@ -567,8 +589,8 @@ class MotorApp:
             self.left_column.grid_configure(row=0, column=0, padx=0, sticky="ew")
             self.right_column.grid_configure(row=1, column=0, padx=0, pady=(14, 0), sticky="ew")
         else:
-            self.columns.columnconfigure(0, weight=6, uniform="col")
-            self.columns.columnconfigure(1, weight=5, uniform="col")
+            self.columns.columnconfigure(0, weight=1, uniform="col")
+            self.columns.columnconfigure(1, weight=1, uniform="col")
             self.columns.rowconfigure(0, weight=1)
             self.columns.rowconfigure(1, weight=0)
             self.left_column.grid_configure(row=0, column=0, padx=(0, 8), pady=0, sticky="nsew")
@@ -704,21 +726,6 @@ class MotorApp:
                            fill=COLORS["muted"], font=("Segoe UI", 8))
         canvas.create_text(right, height - 6, text=f"{last_time:.1f} s", anchor="se",
                            fill=COLORS["muted"], font=("Segoe UI", 8))
-
-    def toggle_chart(self):
-        self.chart_visible = not self.chart_visible
-        if self.chart_visible:
-            self.chart_card.pack(fill="x", pady=(8, 0), before=self.chart_toggle.master.winfo_children()[-1])
-            self.chart_toggle.configure(text="▾  Livegrafiek verbergen")
-            self._draw_chart()
-            if self.controller.client:
-                self._schedule_position_poll()
-        else:
-            self.chart_card.pack_forget()
-            self.chart_toggle.configure(text="▸  Livegrafiek tonen")
-            if not self.auto_update.get() and self.poll_job is not None:
-                self.root.after_cancel(self.poll_job)
-                self.poll_job = None
 
     def _show_limit_row(self):
         self.limit_symmetric_row.pack_forget()
@@ -857,7 +864,7 @@ class MotorApp:
             messagebox.showerror("PID toepassen", str(exc))
 
     def _toggle_polling(self):
-        if not self.auto_update.get() and not self.chart_visible:
+        if not self.auto_update.get():
             if self.poll_job is not None:
                 self.root.after_cancel(self.poll_job)
                 self.poll_job = None
@@ -865,8 +872,7 @@ class MotorApp:
             self._schedule_position_poll()
 
     def _schedule_position_poll(self):
-        if (not self.controller.client or (not self.auto_update.get() and not self.chart_visible)
-                or self.poll_job is not None):
+        if not self.controller.client or not self.auto_update.get() or self.poll_job is not None:
             return
         try:
             interval = int(self.poll_interval.get())
@@ -879,11 +885,8 @@ class MotorApp:
 
     def _poll_position(self):
         self.poll_job = None
-        if self.chart_visible:
+        if self.auto_update.get():
             self._read_chart_sample()
-        elif self.auto_update.get():
-            self.read_position(show_errors=False)
-        if self.auto_update.get() or self.chart_visible:
             self._schedule_position_poll()
 
     def scan_ports(self):
