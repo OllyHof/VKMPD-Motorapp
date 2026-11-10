@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import re
 import subprocess
 import sys
@@ -217,6 +218,8 @@ class MotorApp:
         self.position_pulses_per_rev = tk.StringVar(value="24")
         self.auto_update = tk.BooleanVar(value=True)
         self.poll_interval = tk.StringVar(value="100")
+        self.alarm_suppressed = tk.IntVar(value=1)
+        self.alarm_register_value = 1
         self.travel_limit = tk.StringVar(value="360")
         self.positive_limit = tk.StringVar(value="360")
         self.negative_limit = tk.StringVar(value="360")
@@ -237,7 +240,14 @@ class MotorApp:
         self.parity = tk.StringVar(value="E")
         self.speed = tk.StringVar(value="18000")
         self.acceleration = tk.StringVar(value="98302.5")
+        self.pid_mode = tk.StringVar(value="Snelheidsregeling")
+        self.pid_values = {
+            mode: [tk.StringVar() for _ in range(3)]
+            for mode in ("Snelheidsregeling", "Positieregeling")
+        }
         self.target = tk.StringVar(value="10")
+        self.raw_register_address = tk.StringVar()
+        self.raw_register_value = tk.StringVar()
         self.desired_position = None
         self.chart_visible = False
         self.chart_samples = []
@@ -395,6 +405,29 @@ class MotorApp:
                    foreground="navy", height=42).pack(side="left", padx=(10, 0))
         ttk.Label(motion, text="De as kan direct bewegen. Houd de as vrij en begin met lage limieten.", style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(14, 0))
 
+        ttk.Separator(motion).pack(fill="x", pady=(18, 14))
+        ttk.Label(motion, text="Handmatig Modbus-register schrijven", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(motion, text="Adres en waarde mogen decimaal of hex zijn (hex begint met 0x).",
+                  style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(3, 8))
+        register_row = ttk.Frame(motion, style="Card.TFrame")
+        register_row.pack(fill="x")
+        address_field = ttk.Frame(register_row, style="Card.TFrame")
+        address_field.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Label(address_field, text="Registeradres", style="Muted.TLabel").pack(anchor="w")
+        ttk.Entry(address_field, textvariable=self.raw_register_address).pack(fill="x", pady=(3, 0))
+        value_field = ttk.Frame(register_row, style="Card.TFrame")
+        value_field.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Label(value_field, text="Waarde (0–65535)", style="Muted.TLabel").pack(anchor="w")
+        ttk.Entry(value_field, textvariable=self.raw_register_value).pack(fill="x", pady=(3, 0))
+        PillButton(register_row, "Lees", self.read_register, color="surface",
+                   foreground="blue", height=38).pack(side="right", anchor="s", padx=(0, 6))
+        PillButton(register_row, "Verstuur", self.write_register, color="blue",
+                   height=38).pack(side="right", anchor="s")
+        self.register_read_result = tk.StringVar(value="Nog geen register uitgelezen")
+        ttk.Label(motion, textvariable=self.register_read_result, style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
+        ttk.Label(motion, text="Let op: een register schrijven kan motorbeweging of een wijziging van driverinstellingen veroorzaken.",
+                  style="Muted.TLabel", wraplength=450).pack(anchor="w", pady=(8, 0))
+
         limits_card = RoundedCard(right, "SNELHEID & VERSNELLING", padding=18)
         limits_card.pack(fill="x", pady=(0, 14))
         limits = limits_card.content
@@ -403,18 +436,50 @@ class MotorApp:
         self.speed_unit_label.pack(anchor="w")
         speed_row = ttk.Frame(limits, style="Card.TFrame")
         speed_row.pack(fill="x", pady=(4, 10))
-        ttk.Entry(speed_row, textvariable=self.speed).pack(side="left", fill="x", expand=True)
+        self.speed_entry = ttk.Entry(speed_row, textvariable=self.speed)
+        self.speed_entry.pack(side="left", fill="x", expand=True)
+        self.speed_entry.bind("<FocusOut>", lambda _event: self._clamp_motion_input("speed"))
+        self.speed_entry.bind("<Return>", lambda _event: self._clamp_motion_input("speed"))
         self.speed_max_label = ttk.Label(speed_row, text="", style="Muted.TLabel")
         self.speed_max_label.pack(side="left", padx=(10, 0))
         self.accel_unit_label = ttk.Label(limits, text="Versnelling (°/s²)", style="Section.TLabel")
         self.accel_unit_label.pack(anchor="w")
         accel_row = ttk.Frame(limits, style="Card.TFrame")
         accel_row.pack(fill="x", pady=(4, 8))
-        ttk.Entry(accel_row, textvariable=self.acceleration).pack(side="left", fill="x", expand=True)
+        self.acceleration_entry = ttk.Entry(accel_row, textvariable=self.acceleration)
+        self.acceleration_entry.pack(side="left", fill="x", expand=True)
+        self.acceleration_entry.bind("<FocusOut>", lambda _event: self._clamp_motion_input("acceleration"))
+        self.acceleration_entry.bind("<Return>", lambda _event: self._clamp_motion_input("acceleration"))
         self.accel_max_label = ttk.Label(accel_row, text="", style="Muted.TLabel")
         self.accel_max_label.pack(side="left", padx=(10, 0))
         PillButton(limits, "Limieten toepassen", self.apply_limits, color="purple",
                    height=36).pack(anchor="e", pady=(4, 0))
+
+        pid_card = RoundedCard(right, "PID-REGELING", padding=18)
+        pid_card.pack(fill="x", pady=(0, 14))
+        pid = pid_card.content
+        ttk.Label(pid, text="Kies welke regelkring je wilt bekijken of aanpassen.",
+                  style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(0, 8))
+        self.pid_mode_box = ttk.Combobox(pid, textvariable=self.pid_mode,
+                                         values=tuple(self.pid_values), state="readonly", width=22)
+        self.pid_mode_box.pack(anchor="w", pady=(0, 10))
+        self.pid_mode_box.bind("<<ComboboxSelected>>", self._select_pid_mode)
+        self.pid_entries = []
+        for index, name in enumerate(("P", "I", "D")):
+            row = ttk.Frame(pid, style="Card.TFrame")
+            row.pack(fill="x", pady=2)
+            ttk.Label(row, text=name, style="Section.TLabel", width=3).pack(side="left")
+            entry = ttk.Entry(row, textvariable=self.pid_values[self.pid_mode.get()][index], width=16)
+            entry.pack(side="left", fill="x", expand=True)
+            self.pid_entries.append(entry)
+        pid_actions = ttk.Frame(pid, style="Card.TFrame")
+        pid_actions.pack(fill="x", pady=(10, 0))
+        PillButton(pid_actions, "Lees uit driver", self.read_pid, color="surface",
+                   foreground="blue", height=34).pack(side="left")
+        PillButton(pid_actions, "Pas PID toe", self.apply_pid, color="purple",
+                   height=34).pack(side="right")
+        ttk.Label(pid, text="Bereik: snelheids-P 0,001–1; positie-P 0,1–100; I en D 0,001–1. Pas gains voorzichtig aan.",
+                  style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(8, 0))
 
         setup_card = RoundedCard(right, "NULPUNT & VERVERSEN", padding=18)
         setup_card.pack(fill="both", expand=True)
@@ -425,23 +490,27 @@ class MotorApp:
         ttk.Separator(setup).pack(fill="x", pady=(0, 13))
         ttk.Label(setup, text="Softwarematige positielimiet vanaf nul", style="Section.TLabel").pack(anchor="w")
         mode_box = ttk.Combobox(setup, textvariable=self.limit_mode,
-                                values=("Symmetrisch (+/−)", "Apart (+ en −)"),
+                                values=("Symmetrisch (+/−)", "Apart (+ en −)", "Geen limiet"),
                                 state="readonly", width=22)
         mode_box.pack(anchor="w", pady=(5, 7))
         mode_box.bind("<<ComboboxSelected>>", self._change_limit_mode)
-        self.limit_symmetric_row = ttk.Frame(setup, style="Card.TFrame")
+        self.limit_value_container = ttk.Frame(setup, style="Card.TFrame")
+        self.limit_value_container.pack(fill="x")
+        self.limit_symmetric_row = ttk.Frame(self.limit_value_container, style="Card.TFrame")
         ttk.Label(self.limit_symmetric_row, text="±", style="Section.TLabel").pack(side="left", padx=(0, 5))
         ttk.Entry(self.limit_symmetric_row, textvariable=self.travel_limit, width=12).pack(side="left")
         self.travel_unit_sym_label = ttk.Label(self.limit_symmetric_row, text="°", style="Muted.TLabel")
         self.travel_unit_sym_label.pack(side="left", padx=(8, 0))
-        self.limit_asymmetric_row = ttk.Frame(setup, style="Card.TFrame")
+        self.limit_asymmetric_row = ttk.Frame(self.limit_value_container, style="Card.TFrame")
         ttk.Label(self.limit_asymmetric_row, text="+", style="Section.TLabel").pack(side="left", padx=(0, 4))
         ttk.Entry(self.limit_asymmetric_row, textvariable=self.positive_limit, width=9).pack(side="left")
         ttk.Label(self.limit_asymmetric_row, text="−", style="Section.TLabel").pack(side="left", padx=(12, 4))
         ttk.Entry(self.limit_asymmetric_row, textvariable=self.negative_limit, width=9).pack(side="left")
         self.travel_unit_asym_label = ttk.Label(self.limit_asymmetric_row, text="°", style="Muted.TLabel")
         self.travel_unit_asym_label.pack(side="left", padx=(8, 0))
-        ttk.Label(setup, text="Geen vaste bovengrens; de driver gebruikt een 32-bit doelpositie.", style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(5, 13))
+        self.limit_info = ttk.Label(setup, text="", style="Muted.TLabel", wraplength=390)
+        self.limit_info.pack(anchor="w", pady=(5, 13))
+        self._show_limit_row()
         ttk.Separator(setup).pack(fill="x", pady=(0, 12))
         ttk.Checkbutton(setup, text="Positie automatisch verversen", variable=self.auto_update, command=self._toggle_polling).pack(anchor="w")
         refresh = ttk.Frame(setup, style="Card.TFrame")
@@ -451,6 +520,12 @@ class MotorApp:
         ttk.Label(setup, text="Pulsen per omwenteling", style="Section.TLabel").pack(anchor="w", pady=(14, 4))
         ttk.Entry(setup, textvariable=self.position_pulses_per_rev, width=12).pack(anchor="w")
         ttk.Label(setup, text="Kalibreer deze waarde vóór gebruik. 24 is alleen een startwaarde.", style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(5, 0))
+        ttk.Separator(setup).pack(fill="x", pady=(14, 12))
+        ttk.Label(setup, text="Alarm bij driverfout", style="Section.TLabel").pack(anchor="w")
+        ttk.Checkbutton(setup, text="Alarm onderdrukken", variable=self.alarm_suppressed,
+                        command=self.set_alarm_suppression).pack(anchor="w", pady=(5, 0))
+        ttk.Label(setup, text="Aan = register 0x0099 waarde 1 (alarm uit). Uit = 0 (alarm actief bij fout).",
+                  style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(3, 0))
 
         self.chart_toggle = PillButton(page, "▸  Livegrafiek tonen", self.toggle_chart,
                                        color="purple", canvas_bg=COLORS["canvas"], height=38)
@@ -476,7 +551,6 @@ class MotorApp:
         footer = ttk.Frame(page, style="Canvas.TFrame")
         footer.pack(fill="x", pady=(14, 0))
         ttk.Label(footer, text="Gebruik fysieke begrenzing en houd de as vrij; de positielimiet geldt vanaf het nulpunt.", style="CanvasMuted.TLabel").pack(side="left", anchor="center")
-        self._show_limit_row()
         self._update_units()
 
     def _responsive_columns(self, event=None):
@@ -649,8 +723,15 @@ class MotorApp:
     def _show_limit_row(self):
         self.limit_symmetric_row.pack_forget()
         self.limit_asymmetric_row.pack_forget()
-        row = self.limit_symmetric_row if self.limit_mode.get().startswith("Symmetrisch") else self.limit_asymmetric_row
-        row.pack(anchor="w")
+        mode = self.limit_mode.get()
+        if mode.startswith("Symmetrisch"):
+            self.limit_symmetric_row.pack(anchor="w")
+            self.limit_info.configure(text="Doelen zijn begrensd op ± deze waarde vanaf het nulpunt.")
+        elif mode.startswith("Apart"):
+            self.limit_asymmetric_row.pack(anchor="w")
+            self.limit_info.configure(text="Stel de maximale positieve (+) en negatieve (−) positie vanaf nul in.")
+        else:
+            self.limit_info.configure(text="Geen softwarematige positielimiet. De 32-bit grens van de driver blijft gelden.")
 
     def _change_limit_mode(self, _event=None):
         new_mode = self.limit_mode.get()
@@ -669,6 +750,8 @@ class MotorApp:
         self._show_limit_row()
 
     def _limit_bounds(self):
+        if self.limit_mode.get() == "Geen limiet":
+            return None, None
         if self.limit_mode.get().startswith("Symmetrisch"):
             limit = float(self.travel_limit.get())
             return limit, limit
@@ -718,6 +801,8 @@ class MotorApp:
         symbol = {"graden": "°", "radialen": "rad", "rotaties": "rot"}[new_unit]
         max_accel = (6553.5 * 3.141592653589793 / 12) / radians_per_unit(new_unit)
         max_speed = (MAX_RPM * 2 * 3.141592653589793 / 60) / radians_per_unit(new_unit)
+        self.max_speed_value = max_speed
+        self.max_accel_value = max_accel
         self.speed_unit_label.configure(text=f"Snelheid ({self._speed_symbol()})")
         self.accel_unit_label.configure(text=f"Versnelling ({symbol}/s²)")
         if hasattr(self, "chart_checkbuttons"):
@@ -728,6 +813,48 @@ class MotorApp:
         self.travel_unit_asym_label.configure(text=symbol)
         self.speed_max_label.configure(text=f"Max {max_speed:,.1f} {self._speed_symbol()}")
         self.accel_max_label.configure(text=f"Max {max_accel:,.0f} {symbol}/s²")
+        self._clamp_motion_input("speed", quiet=True)
+        self._clamp_motion_input("acceleration", quiet=True)
+
+    def _clamp_motion_input(self, kind, quiet=False):
+        variable = self.speed if kind == "speed" else self.acceleration
+        maximum = self.max_speed_value if kind == "speed" else self.max_accel_value
+        try:
+            value = float(variable.get().strip().replace(",", "."))
+        except (ValueError, AttributeError):
+            return False
+        if not math.isfinite(value) or value <= 0:
+            return False
+        if value > maximum:
+            variable.set(f"{maximum:.6g}")
+            if not quiet:
+                title = "Snelheid begrensd" if kind == "speed" else "Versnelling begrensd"
+                messagebox.showinfo(title, f"De invoer is teruggezet naar het maximum: {maximum:.6g}.")
+        return True
+
+    def _select_pid_mode(self, _event=None):
+        for index, entry in enumerate(self.pid_entries):
+            entry.configure(textvariable=self.pid_values[self.pid_mode.get()][index])
+
+    def read_pid(self):
+        try:
+            values = self.controller.read_pid(self.pid_mode.get())
+            for variable, value in zip(self.pid_values[self.pid_mode.get()], values):
+                variable.set(f"{value:.7g}")
+            self.status.set(f"PID uitgelezen · {self.pid_mode.get()}")
+        except Exception as exc:
+            messagebox.showerror("PID uitlezen", str(exc))
+
+    def apply_pid(self):
+        try:
+            values = [variable.get().strip().replace(",", ".")
+                      for variable in self.pid_values[self.pid_mode.get()]]
+            if any(not value for value in values):
+                raise ValueError("Vul P, I en D in of lees eerst de huidige waarden uit.")
+            self.controller.write_pid(self.pid_mode.get(), *values)
+            self.status.set(f"PID toegepast · {self.pid_mode.get()}")
+        except Exception as exc:
+            messagebox.showerror("PID toepassen", str(exc))
 
     def _toggle_polling(self):
         if not self.auto_update.get() and not self.chart_visible:
@@ -795,8 +922,9 @@ class MotorApp:
         self.baudrate.set(str(baud))
         self.parity.set(parity)
         self._set_scanning(False)
+        alarm_note = self._initialize_alarm_setting()
         note = self._speed_config_note()
-        self.status.set(f"Verbonden · {port} · {baud} baud · {parity}{stopbits} · slave {address} · ID 0x{identity:04X}{note}")
+        self.status.set(f"Verbonden · {port} · {baud} baud · {parity}{stopbits} · slave {address} · ID 0x{identity:04X}{note}{alarm_note}")
         self.read_position()
         self._schedule_position_poll()
 
@@ -818,13 +946,35 @@ class MotorApp:
             if self.controller.client and (self.controller.port != self.port.get() or self.controller.unit_id != address):
                 self.controller.close()
             identity = self.controller.connect(self.port.get(), address)
+            alarm_note = self._initialize_alarm_setting()
             note = self._speed_config_note()
-            self.status.set(f"Verbonden · {self.port.get()} · slave {address} · ID 0x{identity:04X}{note}")
+            self.status.set(f"Verbonden · {self.port.get()} · slave {address} · ID 0x{identity:04X}{note}{alarm_note}")
             self.read_position()
             self._schedule_position_poll()
         except Exception as exc:
             self.status.set("Verbinding mislukt")
             messagebox.showerror("Verbinding", str(exc))
+
+    def _initialize_alarm_setting(self):
+        """Apply the requested startup default: 0x0099=1 disables the fault alarm."""
+        self.alarm_suppressed.set(1)
+        try:
+            self.controller.write_register(0x0099, 1)
+            self.alarm_register_value = 1
+            return " · alarm onderdrukt (0x0099=1)"
+        except Exception as exc:
+            return f" · alarmstandaard niet ingesteld: {exc}"
+
+    def set_alarm_suppression(self):
+        value = int(self.alarm_suppressed.get())
+        try:
+            self.controller.write_register(0x0099, value)
+            self.alarm_register_value = value
+            state = "onderdrukt" if value == 1 else "actief bij fout"
+            self.status.set(f"Alarminstelling toegepast · {state} · register 0x0099={value}")
+        except Exception as exc:
+            self.alarm_suppressed.set(self.alarm_register_value)
+            messagebox.showerror("Alarminstelling", str(exc))
 
     def read_position(self, show_errors=True):
         try:
@@ -855,14 +1005,43 @@ class MotorApp:
 
     def apply_limits(self):
         try:
+            self._clamp_motion_input("speed")
+            self._clamp_motion_input("acceleration")
             self.controller.pulses_per_revolution = float(self.position_pulses_per_rev.get())
             self.controller.apply_limits(self.speed.get(), self.acceleration.get(), self.units.get())
             self.status.set("Snelheids- en versnellingslimiet zijn toegepast")
         except Exception as exc:
             messagebox.showerror("Limieten toepassen", str(exc))
 
+    def write_register(self):
+        try:
+            address_text = self.raw_register_address.get().strip()
+            value_text = self.raw_register_value.get().strip()
+            if not address_text or not value_text:
+                raise ValueError("Vul zowel het registeradres als de waarde in.")
+            register = int(address_text, 16 if address_text.lower().startswith("0x") else 10)
+            value = int(value_text, 16 if value_text.lower().startswith("0x") else 10)
+            self.controller.write_register(register, value)
+            self.status.set(f"Register geschreven · 0x{register:04X} ← 0x{value:04X} ({value})")
+        except Exception as exc:
+            messagebox.showerror("Register schrijven", str(exc))
+
+    def read_register(self):
+        try:
+            address_text = self.raw_register_address.get().strip()
+            if not address_text:
+                raise ValueError("Vul eerst een registeradres in.")
+            register = int(address_text, 16 if address_text.lower().startswith("0x") else 10)
+            value = self.controller.read_register(register)
+            self.register_read_result.set(f"Register 0x{register:04X}: {value} decimaal · 0x{value:04X} hex")
+            self.status.set(f"Register uitgelezen · 0x{register:04X}")
+        except Exception as exc:
+            messagebox.showerror("Register uitlezen", str(exc))
+
     def move_to(self):
         try:
+            self._clamp_motion_input("speed")
+            self._clamp_motion_input("acceleration")
             self.controller.pulses_per_revolution = float(self.position_pulses_per_rev.get())
             positive_limit, negative_limit = self._limit_bounds()
             current = self.controller.move_to(self.target.get(), positive_limit, negative_limit,

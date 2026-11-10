@@ -22,6 +22,28 @@ commando om de pakketten later handmatig te installeren.
 - `motor_controller.py` bevat Modbus-communicatie, positieomrekening en de bewegingslimieten.
 - `requirements.txt` bevat de externe Python-pakketten.
 
+Onder **Beweging** staat ook **Handmatig Modbus-register schrijven**. Vul een
+registeradres en een 16-bit waarde in als decimaal getal of als hexwaarde met `0x`
+(bijvoorbeeld `0x0040` en `0x0000`). Met **Lees** lees je het registeradres uit; de
+waarde verschijnt als decimaal en hex. Een register schrijven kan direct beweging of
+een wijziging van driverinstellingen veroorzaken; controleer adres en waarde in de
+driverhandleiding.
+
+In **Nulpunt & Verversen** staat de schakelaar **Alarm onderdrukken** voor register
+`0x0099`. Bij elke verbinding schrijft de app standaard waarde `1` (alarm
+onderdrukt). Zet de schakelaar uit om waarde `0` te schrijven en het alarm bij een
+driverfout actief te laten.
+
+In **Snelheid & Versnelling** worden waarden boven de getoonde driverlimiet bij
+verlaten van het invoerveld automatisch teruggezet naar het maximum. De app doet
+dit ook voordat een limiet of beweging wordt verstuurd.
+
+Onder **PID-regeling** kun je de snelheids- of positieregeling kiezen. Met **Lees
+uit driver** haal je de huidige P-, I- en D-gains op; **Pas PID toe** schrijft de
+ingevulde gains naar de driver. De app controleert de bereiken uit de handleiding:
+snelheids-P 0,001–1, positie-P 0,1–100 en I/D 0,001–1. PID-gains beïnvloeden de
+stabiliteit en beweging; lees de bestaande waarden eerst uit en wijzig ze stapsgewijs.
+
 De app scant de aanwezige COM-poorten, probeert per poort de baudrate en zoekt daarna
 het slave-adres. Bij een match verbindt de app automatisch. De scan leest alleen
 registers en stuurt geen bewegingscommando's. Hij probeert 9600 baud met even en geen
@@ -72,10 +94,11 @@ beschreven in de driverhandleiding. Voor de snelheidsuitlezing moeten
 driverregisters 0x0073 en 0x0074 overeenkomen met 8 motorpolen en overbrengingsratio
 1,0. De app leest deze instellingen en toont een melding als ze afwijken; de app
 verandert ze niet automatisch.
-De softwarematige positielimiet kan symmetrisch (±) of apart voor de positieve en
-negatieve richting worden ingesteld, steeds rond het sessienulpunt. De limieten hebben
-geen vaste bovengrens in de app. Het doel moet binnen die limiet blijven en passen in
-het 32-bit positie-register van de driver.
+De softwarematige positielimiet kan symmetrisch (±), apart voor de positieve en
+negatieve richting, of op **Geen limiet** worden gezet. Bij de twee limietmodi geldt
+de grens vanaf het sessienulpunt en moet het doel binnen de ingestelde grens vallen.
+Bij **Geen limiet** controleert de app alleen nog het 32-bit positie-register van de
+driver. Gebruik fysieke eindschakelaars of mechanische begrenzing.
 
 De snelheids- en versnellingsvelden zijn de maximumwaarden voor de gesloten-lus
 positie-/snelheidsregeling. Snelheid is begrensd op de nominale 3000 rpm van deze

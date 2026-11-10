@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import struct
 
 import serial
 from serial.tools import list_ports
@@ -91,6 +92,10 @@ class RtuSerialClient:
 class MotorController:
     """Hardware access, position conversion, and guarded motion commands."""
     UNIT_RADIANS = {"graden": math.pi / 180, "radialen": 1.0, "rotaties": 2 * math.pi}
+    PID_REGISTERS = {
+        "Snelheidsregeling": (0x00C0, ((0.001, 1.0), (0.001, 1.0), (0.001, 1.0))),
+        "Positieregeling": (0x00C6, ((0.1, 100.0), (0.001, 1.0), (0.001, 1.0))),
+    }
 
     def __init__(self, pulses_per_revolution=24):
         self.pulses_per_revolution = pulses_per_revolution
@@ -209,6 +214,51 @@ class MotorController:
         if response.isError():
             raise RuntimeError(f"Modbus schrijffout bij register 0x{register:04X}: {response}")
 
+    def write_register(self, register, value):
+        """Write one user-selected holding register after validating its 16-bit range."""
+        if isinstance(register, bool) or not isinstance(register, int) or not 0 <= register <= 0xFFFF:
+            raise ValueError("Registeradres moet tussen 0 en 65535 liggen.")
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFF:
+            raise ValueError("Registerwaarde moet tussen 0 en 65535 liggen.")
+        self._write(register, value)
+
+    def read_register(self, register):
+        """Read one user-selected holding register after validating its 16-bit address."""
+        if isinstance(register, bool) or not isinstance(register, int) or not 0 <= register <= 0xFFFF:
+            raise ValueError("Registeradres moet tussen 0 en 65535 liggen.")
+        return self._read(register, 1)[0]
+
+    def read_pid(self, mode):
+        """Read P, I and D float32 gains (high register word first)."""
+        try:
+            start, _ranges = self.PID_REGISTERS[mode]
+        except KeyError as exc:
+            raise ValueError("Kies snelheidsregeling of positieregeling.") from exc
+        words = self._read(start, 6)
+        values = []
+        for offset in (0, 2, 4):
+            raw = words[offset].to_bytes(2, "big") + words[offset + 1].to_bytes(2, "big")
+            value = struct.unpack(">f", raw)[0]
+            if not math.isfinite(value):
+                raise RuntimeError("De driver gaf een ongeldige PID-waarde terug.")
+            values.append(value)
+        return tuple(values)
+
+    def write_pid(self, mode, p, i, d):
+        """Write P, I and D float32 gains after checking the manual's ranges."""
+        try:
+            start, ranges = self.PID_REGISTERS[mode]
+        except KeyError as exc:
+            raise ValueError("Kies snelheidsregeling of positieregeling.") from exc
+        values = tuple(float(value) for value in (p, i, d))
+        for name, value, (minimum, maximum) in zip(("P", "I", "D"), values, ranges):
+            if not math.isfinite(value) or not minimum <= value <= maximum:
+                raise ValueError(f"{name} moet tussen {minimum:g} en {maximum:g} liggen.")
+        for offset, value in enumerate(values):
+            high, low = struct.unpack(">HH", struct.pack(">f", value))
+            self._write(start + offset * 2, high)
+            self._write(start + offset * 2 + 1, low)
+
     def position_counts(self):
         words = self._read(0x0024, 2)
         value = (words[0] << 16) | words[1]
@@ -279,15 +329,16 @@ class MotorController:
 
     def move_to(self, target, positive_limit, negative_limit, speed, acceleration, unit):
         target = float(target)
-        positive_limit, negative_limit = float(positive_limit), float(negative_limit)
         speed, acceleration = float(speed), float(acceleration)
         if not math.isfinite(target):
             raise ValueError("Geef een geldige doelpositie op.")
-        if (not math.isfinite(positive_limit) or not math.isfinite(negative_limit)
-                or positive_limit <= 0 or negative_limit <= 0):
-            raise ValueError("Beide positielimieten moeten groter zijn dan nul.")
-        if target > positive_limit or target < -negative_limit:
-            raise ValueError(f"Doelpositie valt buiten de limiet: +{positive_limit:g} en −{negative_limit:g} {unit}.")
+        if positive_limit is not None or negative_limit is not None:
+            positive_limit, negative_limit = float(positive_limit), float(negative_limit)
+            if (not math.isfinite(positive_limit) or not math.isfinite(negative_limit)
+                    or positive_limit <= 0 or negative_limit <= 0):
+                raise ValueError("Beide positielimieten moeten groter zijn dan nul.")
+            if target > positive_limit or target < -negative_limit:
+                raise ValueError(f"Doelpositie valt buiten de limiet: +{positive_limit:g} en −{negative_limit:g} {unit}.")
         rpm = speed * self.radians_per_unit(unit) * 60 / (2 * math.pi)
         if not math.isfinite(rpm) or rpm <= 0 or rpm > MAX_RPM:
             raise ValueError("Snelheid moet positief zijn en maximaal 3000 rpm.")

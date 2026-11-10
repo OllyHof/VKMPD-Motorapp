@@ -43,8 +43,9 @@ De app controleert ontbrekende Python-packages bij het starten en kan installati
 - UI en hardware/controllerlogica zijn gescheiden over twee Python-bestanden.
 - Positie-eenheden: graden, radialen en rotaties. Rotatiesnelheid wordt `rps` genoemd.
 - Positie-invoer met sessienulpunt en configureerbare pulsen per omwenteling (startwaarde 24; moet voor de echte motor gekalibreerd worden).
-- Softwarelimiet kan symmetrisch (+/−) of apart per richting worden ingesteld. Geen vaste softwarematige maximuminstelling; driver/32-bit positiegrenzen blijven gelden.
+- Softwarelimiet kan symmetrisch (+/−), apart per richting of op geen limiet worden ingesteld. Zonder softwarelimiet blijft de 32-bit positiegrens van de driver gelden.
 - Stopknop aanwezig.
+- Alarm-onderdrukkingsschakelaar gebruikt register `0x0099`: de app zet bij verbinding standaard waarde `1` (alarm onderdrukt); waarde `0` laat het driveralarm bij fouten actief.
 - Inklapbare livegrafiek: positie, gewenste positie, snelheid en optioneel fasestroom; meerdere signalen kunnen samen worden getoond en livewaarden staan naast de grafiek.
 - Verversing standaard 100 ms, instelbaar 100–5000 ms; automatisch verversen kan uit.
 - Standaardsnelheid 18.000°/s (3000 rpm) en acceleratie 98.302,5°/s² (maximale waarde die eerder op verzoek is ingesteld). Een positiecommando kan de motor snel laten versnellen; waarschuw de gebruiker dat dit directe beweging kan veroorzaken.
